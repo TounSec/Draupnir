@@ -19,8 +19,11 @@ use udev::{EventType, MonitorBuilder};
 const LOCK_PATH: &str = "/run/draupnir.lock";
 const CONFIG_PATH: &str = "/etc/draupnir/config.toml";
 
-fn main() {
-    env_logger::init();
+fn main() -> Result<()> {
+    env_logger::Builder::from_default_env()
+        .format_timestamp_secs()
+        .format_module_path(false)
+        .init();
 
     if !geteuid().is_root() {
         bail!("draupnir must run as root");
@@ -93,7 +96,9 @@ fn handle_device(devnode: &Path, cfg: &config::Config) -> Result<()> {
     let _mounted = mount::mount_disk(devnode, &cfg.mountpoint).context("mounting backup disk")?;
 
     backup::run_backup(cfg).context("running backup")?;
+    info!("backup completed successfully, unmounting");
     Ok(())
+    // _mounted dropped here -> umount2
 }
 
 fn acquire_lock() -> Result<Option<Flock<std::fs::File>>> {

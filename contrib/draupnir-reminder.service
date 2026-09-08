@@ -1,0 +1,12 @@
+[Unit]
+Description=Draupnir backup reminder
+After=graphical-session.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/draupnir-reminder
+Restart=always
+RestartSec=3600
+
+[Install]
+WantedBy=default.target

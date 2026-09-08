@@ -1,0 +1,14 @@
+[Unit]
+Description=Draupnir encrypted backup
+After=local-fs.target
+ConditionPathExists=/etc/draupnir/config.toml
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/draupnir
+User=root
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

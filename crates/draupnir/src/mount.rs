@@ -1,7 +1,7 @@
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
-use log::error;
+use log::{error, info};
 use nix::mount::{MntFlags, MsFlags, mount, umount2};
 
 pub struct Mounted {
@@ -23,16 +23,20 @@ impl Drop for Mounted {
                     e
                 );
             }
+        } else {
+            info!("unmounted {}", self.mountpoint.display());
         }
     }
 }
 
 pub fn mount_disk(device: &Path, mountpoint: &Path) -> Result<Mounted> {
+    info!("mounting {} -> {}", device.display(), mountpoint.display());
     let flags = MsFlags::MS_NOSUID | MsFlags::MS_NODEV | MsFlags::MS_NOEXEC;
 
     mount(Some(device), mountpoint, Some("ext4"), flags, None::<&str>)
         .with_context(|| format!("mounting {} on {}", device.display(), mountpoint.display()))?;
 
+    info!("disk mounted");
     Ok(Mounted {
         mountpoint: mountpoint.to_owned(),
     })
