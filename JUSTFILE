@@ -12,7 +12,7 @@ help:
 build: clean
   cargo build --release
 
-install : build
+install scope: build
   #!/usr/bin/env bash
   set -e
   if [ "{{scope}}" != "user" ] && [ "{{scope}}" != "global" ]; then
@@ -40,7 +40,11 @@ install : build
   _run "draupnir-reminder.timer -> sudo cp contrib/draupnir-reminder.timer /etc/systemd/user/"        sudo cp contrib/draupnir-reminder.timer /etc/systemd/user/
   _run "systemctl daemon-reload -> sudo systemctl daemon-reload"                                      sudo systemctl daemon-reload
   _run "udevadm reload -> sudo udevadm control --reload-rules"                                        sudo udevadm control --reload-rules
-  _run "enable reminder timer -> sudo systemctl --global enable draupnir-reminder.timer"              sudo systemctl --global enable draupnir-reminder.timer
+  if [ "{{scope}}" = "user" ]; then
+    _run "enable reminder timer -> sudo systemctl --user enable --now draupnir-reminder.timer"              sudo systemctl --usal enable --now draupnir-reminder.timer
+  else
+    _run "enable reminder timer -> sudo systemctl --global enable draupnir-reminder.timer"              sudo systemctl --global enable draupnir-reminder.timer
+  fi
 
   # sudo cp target/release/draupnir /usr/local/bin/
   # sudo cp target/release/draupnir-reminder /usr/local/bin
@@ -52,9 +56,12 @@ install : build
   # sudo udevadm control --reload-rules
   # sudo systemctl --global enable draupnir-reminder.timer
 
-uninstall:
+uninstall scope:
   #!/usr/bin/env bash
   set -e
+  if [ "{{scope}}" != "user" ] && [ "{{scope}}" != "global" ]; then
+    echo "Usage: just install [user|global]"; exit 1
+  fi
   sudo -v
   _run() {
     local label="$1"; shift
@@ -74,7 +81,11 @@ uninstall:
   _run "99-draupnir.rules -> sudo rm -f /etc/udev/rules.d/99-draupnir.rules"                                  sudo rm -f /etc/udev/rules.d/99-draupnir.rules
   _run "draupnir-reminder.service -> sudo rm -f /etc/systemd/user/draupnir-reminder.service"                  sudo rm -f /etc/systemd/user/draupnir-reminder.service
   _run "draupnir-reminder.timer -> sudo rm -f /etc/systemd/user/draupnir-reminder.timer"                      sudo rm -f /etc/systemd/user/draupnir-reminder.timer
-  _run "disable reminder timer -> sudo systemctl --global disable draupnir-reminder.timer"                    sudo systemctl --global disable draupnir-reminder.timer
+  if [ "{{scope}}" = "user" ]; then
+    _run "disable reminder timer -> sudo systemctl --user disable --now draupnir-reminder.timer"                    sudo systemctl --user disable --now draupnir-reminder.timer
+  else
+    _run "disable reminder timer -> sudo systemctl --global disable draupnir-reminder.timer"                    sudo systemctl --global disable draupnir-reminder.timer
+  fi
   _run "/var/lib/draupnir -> sudo rm -f /var/lib/draupnir/last-backup"                                        sudo rm -f /var/lib/draupnir/last-backup
   _run "/var/lib/draupnir (rmdir) -> sudo rmdir --ignore-fail-on-non-empty /var/lib/draupnir"                 sudo rmdir --ignore-fail-on-non-empty /var/lib/draupnir
   _run "systemctl daemon-reload -> sudo systemctl daemon-reload"                                              sudo systemctl daemon-reload

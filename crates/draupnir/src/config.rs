@@ -21,6 +21,7 @@ pub struct Config {
     pub destination: PathBuf,
     pub age_pubkey: String,
     pub keep: usize,
+    pub threshold_days: u64,
 }
 
 pub fn load(path: &Path) -> Result<Config> {

@@ -3,4 +3,5 @@ mountpoint = "/mnt/draupnir"
 destination = "/mnt/draupnir/backups"
 sources = ["/etc"]
 age_pubkey = "age1..."
+threshold_days = 30
 keep = 3

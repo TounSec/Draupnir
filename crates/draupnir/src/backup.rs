@@ -98,13 +98,13 @@ pub fn run_backup(config: &Config) -> Result<()> {
     rotate(&config.destination, config.keep).context("rotating old archives")?;
 
     info!("[ 6/6 ] writing timestamp");
-    write_last_backup(ts).context("writing last-backup timestamp")?;
+    write_last_backup(ts, config.threshold_days).context("writing last-backup timestamp")?;
 
     info!("done {name}");
     Ok(())
 }
 
-fn write_last_backup(ts: u64) -> Result<()> {
+fn write_last_backup(ts: u64, threshold_days: u64) -> Result<()> {
     use std::io::Write as _;
     use std::os::unix::fs::OpenOptionsExt;
 
@@ -114,6 +114,7 @@ fn write_last_backup(ts: u64) -> Result<()> {
     let part = dir.join("last-backup.part");
     let final_path = dir.join("last-backup");
 
+    // last-backup
     let mut file = fs::OpenOptions::new()
         .create(true)
         .write(true)
@@ -125,6 +126,20 @@ fn write_last_backup(ts: u64) -> Result<()> {
     writeln!(file, "{ts}").context("writing timestamp")?;
     file.sync_all().context("syncing last-backup")?;
     fs::rename(&part, &final_path).context("renaming last-backup")?;
+
+    // threshold_days
+    let part = dir.join("threshold-days.part");
+    let mut file = fs::OpenOptions::new()
+        .create(true)
+        .write(true)
+        .truncate(true)
+        .mode(0o644)
+        .open(&part)
+        .context("creating threshold-days.part")?;
+
+    writeln!(file, "{threshold_days}").context("writing threshold")?;
+    file.sync_all().context("syncing threshold-days")?;
+    fs::rename(&part, dir.join("threshold-days")).context("renaming threshold-days")?;
 
     Ok(())
 }
