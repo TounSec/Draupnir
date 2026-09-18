@@ -57,7 +57,10 @@ fn main() -> Result<()> {
             Err(e) => return Err(anyhow::Error::new(e).context("polling udev monitor socket")),
         }
 
-        let revents = fds[0].revents().unwrap_or(PollFlags::empty());
+        let revents = match fds[0].revents() {
+            Some(r) => r,
+            None => bail!("poll returned unknown event flags on udev socket"),
+        };
         if revents.intersects(PollFlags::POLLERR | PollFlags::POLLNVAL | PollFlags::POLLHUP) {
             bail!("udev monitor socket error (revents {revents:?})");
         }
@@ -92,13 +95,12 @@ fn main() -> Result<()> {
 }
 
 fn handle_device(devnode: &Path, cfg: &config::Config) -> Result<()> {
-    // Named binding: `let _ = mount_disk(...)` would unmount before backup
-    let _mounted = mount::mount_disk(devnode, &cfg.mountpoint).context("mounting backup disk")?;
-
+    let mounted = mount::mount_disk(devnode, &cfg.mountpoint).context("mounting backup disk")?;
     backup::run_backup(cfg).context("running backup")?;
     info!("backup completed successfully, unmounting");
+    // Explicit unmount so failure is detected and reported; Drop is the silent safety net
+    mounted.unmount().context("unmounting backup disk")?;
     Ok(())
-    // _mounted dropped here -> umount2
 }
 
 fn acquire_lock() -> Result<Option<Flock<std::fs::File>>> {

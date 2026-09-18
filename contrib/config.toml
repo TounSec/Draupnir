@@ -1,7 +1,0 @@
-uuid = "7f3c1a2e-9b44-4d51-8e0a-1c2d3e4f5a6b" # Disk UUID ; check with lsblk -o NAME,UUID,FSTYPE,MOUNTPOINT or sudo blkid
-mountpoint = "/mnt/draupnir"
-destination = "/mnt/draupnir/backups"
-sources = ["/etc"]
-age_pubkey = "age1..."
-threshold_days = 30
-keep = 3

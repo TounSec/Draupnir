@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 
 use anyhow::{Context, Result, anyhow};
-use log::{info, warn};
+use log::{debug, info, warn};
 
 use crate::config::Config;
 
@@ -18,8 +18,10 @@ impl PartGuard {
 
 impl Drop for PartGuard {
     fn drop(&mut self) {
-        if let Some(ref p) = self.0 {
-            let _ = fs::remove_file(p);
+        if let Some(ref p) = self.0
+            && let Err(e) = fs::remove_file(p)
+        {
+            warn!("failed to remove partial archive {}: {e}", p.display());
         }
     }
 }
@@ -27,8 +29,9 @@ impl Drop for PartGuard {
 pub fn run_backup(config: &Config) -> Result<()> {
     let ts = SystemTime::now()
         .duration_since(SystemTime::UNIX_EPOCH)
-        .unwrap_or_default()
+        .context("system clock is before the Unix epoch, refusing to name an archive")?
         .as_secs();
+
     let name = format!("backup-{ts:020}.tar.zst.age");
     info!("[ 1/6 ] creating archive {name}");
     let part_path = config.destination.join(format!("{name}.part"));
@@ -53,8 +56,8 @@ pub fn run_backup(config: &Config) -> Result<()> {
         age::Encryptor::with_recipients(std::iter::once(&recipient as &dyn age::Recipient))
             .context("creating age encryptor")?;
     let age_w = encryptor.wrap_output(file).context("writing age header")?;
-    let zstd_w =
-        zstd::stream::write::Encoder::new(age_w, 3).context("initialising zstd encoder")?;
+    let zstd_w = zstd::stream::write::Encoder::new(age_w, config.compression_level)
+        .context("initialising zstd encoder")?;
 
     let mut tar_b = tar::Builder::new(zstd_w);
     tar_b.follow_symlinks(false);
@@ -64,24 +67,29 @@ pub fn run_backup(config: &Config) -> Result<()> {
         let meta =
             fs::symlink_metadata(source).with_context(|| format!("stat {}", source.display()))?;
 
+        // Strip leading `/` so paths in the archive mirror the real filesystem layout
+        // and two sources can never collide (e.g. /home and /etc both land under their
+        // own prefix: home/... and etc/...).
+        let archive_prefix = source.strip_prefix("/").unwrap_or(source);
+
         if meta.is_dir() {
-            walk_into(&mut tar_b, source, source)
+            walk_into(&mut tar_b, archive_prefix, source, source, &config.exclude)
                 .with_context(|| format!("archiving {}", source.display()))?;
         } else if meta.is_file() {
-            let name = source
-                .file_name()
-                .ok_or_else(|| anyhow::anyhow!("source has no filename: {}", source.display()))?;
             let mut f =
                 File::open(source).with_context(|| format!("opening {}", source.display()))?;
             tar_b
-                .append_file(name, &mut f)
+                .append_file(archive_prefix, &mut f)
                 .with_context(|| format!("adding {} to archive", source.display()))?;
+        } else if meta.is_symlink() {
+            tar_b
+                .append_path_with_name(source, archive_prefix)
+                .with_context(|| format!("adding symlink {} to archive", source.display()))?;
         } else {
-            warn!("skipping {}: not a file or directory", source.display());
+            warn!("skipping {}: unsupported file type", source.display());
         }
     }
 
-    // End in the order : tar -> zstd -> age
     info!("[ 3/6 ] finalising archive chain (tar -> zstd -> age)");
     let zstd_w = tar_b.into_inner().context("finalising tar")?;
     let age_w = zstd_w.finish().context("finalising zstd")?;
@@ -93,7 +101,6 @@ pub fn run_backup(config: &Config) -> Result<()> {
     guard.disarm();
     fsync_dir(&config.destination).context("fsyncing destination directory")?;
 
-    // rotate only after commited new archive
     info!("[ 5/6 ] rotating old archives (keep {})", config.keep);
     rotate(&config.destination, config.keep).context("rotating old archives")?;
 
@@ -114,7 +121,6 @@ fn write_last_backup(ts: u64, threshold_days: u64) -> Result<()> {
     let part = dir.join("last-backup.part");
     let final_path = dir.join("last-backup");
 
-    // last-backup
     let mut file = fs::OpenOptions::new()
         .create(true)
         .write(true)
@@ -127,7 +133,6 @@ fn write_last_backup(ts: u64, threshold_days: u64) -> Result<()> {
     file.sync_all().context("syncing last-backup")?;
     fs::rename(&part, &final_path).context("renaming last-backup")?;
 
-    // threshold_days
     let part = dir.join("threshold-days.part");
     let mut file = fs::OpenOptions::new()
         .create(true)
@@ -144,10 +149,19 @@ fn write_last_backup(ts: u64, threshold_days: u64) -> Result<()> {
     Ok(())
 }
 
+fn is_excluded(rel: &Path, exclude: &[PathBuf]) -> bool {
+    exclude.iter().any(|ex| {
+        rel.components()
+            .any(|c| Path::new(c.as_os_str()) == ex.as_path())
+    })
+}
+
 fn walk_into<W: std::io::Write>(
     builder: &mut tar::Builder<W>,
-    root: &Path,
+    archive_prefix: &Path,
+    fs_root: &Path,
     dir: &Path,
+    exclude: &[PathBuf],
 ) -> Result<()> {
     let entries = match fs::read_dir(dir) {
         Ok(e) => e,
@@ -179,14 +193,21 @@ fn walk_into<W: std::io::Write>(
         };
 
         let rel = path
-            .strip_prefix(root)
-            .expect("walk always descends from root");
+            .strip_prefix(fs_root)
+            .expect("walk always descends from fs_root");
+
+        if is_excluded(rel, exclude) {
+            debug!("excluding {}", rel.display());
+            continue;
+        }
+
+        let archive_path = archive_prefix.join(rel);
 
         if meta.is_dir() {
             builder
-                .append_dir(rel, &path)
-                .with_context(|| format!("adding dir {} to archive", rel.display()))?;
-            walk_into(builder, root, &path)?;
+                .append_dir(&archive_path, &path)
+                .with_context(|| format!("adding dir {} to archive", archive_path.display()))?;
+            walk_into(builder, archive_prefix, fs_root, &path, exclude)?;
         } else if meta.is_file() {
             let mut f = match File::open(&path) {
                 Ok(f) => f,
@@ -197,10 +218,16 @@ fn walk_into<W: std::io::Write>(
                 Err(e) => return Err(e).with_context(|| format!("opening {}", path.display())),
             };
             builder
-                .append_file(rel, &mut f)
-                .with_context(|| format!("adding {} to archive", rel.display()))?;
+                .append_file(&archive_path, &mut f)
+                .with_context(|| format!("adding {} to archive", archive_path.display()))?;
+        } else if meta.is_symlink() {
+            // follow_symlinks(false) on the builder stores the link itself, never its target
+            builder
+                .append_path_with_name(&path, &archive_path)
+                .with_context(|| format!("adding symlink {} to archive", archive_path.display()))?;
+        } else {
+            warn!("skipping {}: unsupported file type", rel.display());
         }
-        // symlinks ignored (follow_symlinks(false) + symlink_metadata)
     }
     Ok(())
 }

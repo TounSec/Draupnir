@@ -6,8 +6,3 @@ edition = "2024"
 [[bin]]
 name = "draupnir-reminder"
 path = "src/main.rs"
-
-[dependencies]
-anyhow = "1.0.104"
-env_logger = "0.11.11"
-log = "0.4.34"
